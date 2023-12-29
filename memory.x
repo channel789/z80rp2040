@@ -1,7 +1,8 @@
 MEMORY {
     BOOT2 : ORIGIN = 0x10000000, LENGTH = 0x100
     FLASH : ORIGIN = 0x10000100, LENGTH = 2048K - 0x100
-    RAM   : ORIGIN = 0x20000000, LENGTH = 256K
+    Z80RAM: ORIGIN = 0x20000000, LENGTH = 64K
+    RAM   : ORIGIN = 0x20000000 + 64K, LENGTH = 256K - 64K
 }
 
 EXTERN(BOOT2_FIRMWARE)
@@ -15,9 +16,8 @@ SECTIONS {
 } INSERT BEFORE .text;
 
 SECTIONS {
-    . = 0x20030000;
-    .z80 (NOLOAD) :
+    .z80ram (NOLOAD) :
     {
-        *(.z80 .z80.*);
-    } > RAM
-} INSERT AFTER .uninit;
+        *(.z80ram .z80ram.*);
+    } > Z80RAM
+} INSERT BEFORE .data;

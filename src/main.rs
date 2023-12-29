@@ -23,7 +23,7 @@ use usb_device::{
 use usbd_serial::{SerialPort, USB_CLASS_CDC};
 use z80rp2040 as _; // global logger + panicking-behavior + memory layout
 
-const REG_SIZE: usize = 3;
+const REG_SIZE: usize = 4;
 const RAM_START: usize = 0;
 const RAM_SIZE: usize = 0x10000 - REG_SIZE;
 const REG_START: usize = RAM_START + RAM_SIZE;
@@ -50,7 +50,6 @@ fn entry() -> ! {
     )
     .ok()
     .unwrap();
-    let mut delay = Delay::new(core.SYST, clocks.system_clock.freq().to_Hz());
 
     let sio = Sio::new(pac.SIO);
     let pins = hal::gpio::Pins::new(
@@ -177,15 +176,12 @@ fn entry() -> ! {
     let _a14 = pins.gpio14.into_floating_input();
     let _a15 = pins.gpio15.into_floating_input();
 
-    delay.delay_ms(1);
-    reset_pin.set_high().unwrap();
-
     let gpio_in_addr: u32 = 0xd0000000 + 0x004;
     let gpio_in_ptr = gpio_in_addr as *const u32;
 
-    #[link_section = ".z80"]
-    static mut RAM: MaybeUninit<[u8; RAM_SIZE]> = MaybeUninit::uninit();
-    let ram = unsafe { RAM.write([0x00; RAM_SIZE]) };
+    #[link_section = ".z80ram"]
+    static mut RAM: MaybeUninit<[u8; RAM_SIZE + REG_SIZE]> = MaybeUninit::uninit();
+    let ram = unsafe { RAM.write([0x00; RAM_SIZE + REG_SIZE]) };
 
     let mut rx_buf: Option<u8> = None;
     loop {
@@ -197,6 +193,13 @@ fn entry() -> ! {
                     rx_buf = Some(buf[0]);
                 }
             }
+        }
+
+        let is_run = unsafe { core::ptr::read_volatile(&ram[RAM_SIZE] as *const u8) != 0 };
+        if is_run {
+            reset_pin.set_high().unwrap();
+        } else {
+            reset_pin.set_low().unwrap();
         }
 
         if let Some(in_pins) = rx.read() {

@@ -14,5 +14,4 @@ LD (HL),'d'
 LD (HL),'!'
 LD (HL),'\r'
 LD (HL),'\n'
-JP 0
 HALT
