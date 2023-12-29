@@ -10,7 +10,7 @@ use rp_pico::{
         pio::{PIOExt as _, ShiftDirection},
         Clock as _, Sio,
     },
-    pac, XOSC_CRYSTAL_FREQ,
+    pac, XOSC_CRYSTAL_FREQ, entry,
 };
 use z80rp2040 as _; // global logger + panicking-behavior + memory layout
 
@@ -18,7 +18,7 @@ const ROM_SIZE: usize = 0x1000;
 const RAM_SIZE: usize = 0x10000 - ROM_SIZE;
 const ROM: &[u8] = include_bytes!("../hello.bin");
 
-#[cortex_m_rt::entry]
+#[entry]
 fn entry() -> ! {
     defmt::println!("Hello, world!");
 
