@@ -18,6 +18,8 @@ rp-pico = { version = "0.8", features = ["critical-section-impl"] }
 embedded-hal = "0.2"
 pio = "0.2"
 pio-proc = "0.2"
+usb-device = "0.2.9"
+usbd-serial = "0.1.1"
 
 [dev-dependencies]
 defmt-test = "0.3"

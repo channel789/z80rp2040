@@ -1,0 +1,36 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "probe-rs-debug",
+      "request": "launch",
+      "name": "probe_rs Executable launch example",
+      "cwd": "${workspaceFolder}",
+      "runtimeExecutable": "probe-rs",
+      "runtimeArgs": [
+        "dap-server"
+      ],
+      "preLaunchTask": "rust: cargo build",
+      "chip": "RP2040",
+      "flashingConfig": {
+        "flashingEnabled": true,
+        "haltAfterReset": false,
+      },
+      "coreConfigs": [
+        {
+          "coreIndex": 0,
+          "programBinary": "./target/thumbv6m-none-eabi/debug/z80rp2040",
+          "rttEnabled": true,
+          "rttChannelFormats": [
+            {
+              "channelNumber": 0,
+              "dataFormat": "Defmt",
+            },
+          ],
+        }
+      ],
+      "env": {},
+      "consoleLogLevel": "Console"
+    }
+  ]
+}

@@ -4,23 +4,37 @@
 use cortex_m::delay::Delay;
 use embedded_hal::digital::v2::OutputPin;
 use rp_pico::{
+    entry,
     hal::{
         self,
         gpio::{FunctionPio0, Pin, PullUp},
         pio::{PIOExt as _, ShiftDirection},
+        usb::UsbBus,
         Clock as _, Sio,
     },
-    pac, XOSC_CRYSTAL_FREQ, entry,
+    pac, XOSC_CRYSTAL_FREQ,
 };
+use usb_device::{
+    class_prelude::UsbBusAllocator,
+    device::{UsbDeviceBuilder, UsbVidPid},
+};
+use usbd_serial::{USB_CLASS_CDC, SerialPort};
 use z80rp2040 as _; // global logger + panicking-behavior + memory layout
 
 const ROM_SIZE: usize = 0x1000;
-const RAM_SIZE: usize = 0x10000 - ROM_SIZE;
-const ROM: &[u8] = include_bytes!("../hello.bin");
+const REG_SIZE: usize = 3;
+const RAM_START: usize = ROM_SIZE;
+const RAM_SIZE: usize = 0x10000 - ROM_SIZE - REG_SIZE;
+const REG_START: usize = RAM_START + RAM_SIZE;
+const ROM: &[u8] = include_bytes!("../z80/upcase.bin");
+
+const REG_DTR: usize = 0xFFFD;
+const REG_RX: usize = 0xFFFE;
+const REG_TX: usize = 0xFFFF;
 
 #[entry]
 fn entry() -> ! {
-    defmt::println!("Hello, world!");
+    defmt::println!("start");
 
     let core = cortex_m::Peripherals::take().unwrap();
     let mut pac = pac::Peripherals::take().unwrap();
@@ -45,6 +59,19 @@ fn entry() -> ! {
         sio.gpio_bank0,
         &mut pac.RESETS,
     );
+
+    let usb_bus = UsbBusAllocator::new(UsbBus::new(
+        pac.USBCTRL_REGS,
+        pac.USBCTRL_DPRAM,
+        clocks.usb_clock,
+        true,
+        &mut pac.RESETS,
+    ));
+    let mut serial = SerialPort::new(&usb_bus);
+    let mut usb_dev = UsbDeviceBuilder::new(&usb_bus, UsbVidPid(0x6666, 0x0789))
+        .product("Z80RP2040")
+        .device_class(USB_CLASS_CDC)
+        .build();
 
     let mut reset_pin = pins.gpio29.into_push_pull_output();
     reset_pin.set_low().unwrap();
@@ -97,7 +124,7 @@ fn entry() -> ! {
         "jmp next",
         "nonrfsh:",
         "nop side 0",
-        "in pins, 1", // read nRD
+        "in pins, 11", // read nRD + nRFSH + nMREQ + D0..7
         "push",
         "pull ifempty block",
         "out pindirs, 8",
@@ -116,7 +143,7 @@ fn entry() -> ! {
     let (mut sm, mut rx, mut tx) = hal::pio::PIOBuilder::from_program(installed)
         .side_set_pin_base(wait_pin_id)
         .out_pins(d0_pin_id, 8)
-        .in_pin_base(rd_pin_id)
+        .in_pin_base(d0_pin_id)
         .jmp_pin(rfsh_pin_id)
         .clock_divisor_fixed_point(int, frac)
         .out_shift_direction(ShiftDirection::Right)
@@ -157,25 +184,66 @@ fn entry() -> ! {
     let gpio_in_ptr = gpio_in_addr as *const u32;
 
     let ram = cortex_m::singleton!(: [u8; RAM_SIZE] = [0; RAM_SIZE]).unwrap();
+    ram[0] = 78;
+    ram[1] = 9;
 
+    let mut rx_buf: Option<u8> = None;
     loop {
-        if let Some(n_rd) = rx.read() {
-            if n_rd == 0 {
+        usb_dev.poll(&mut [&mut serial]);
+        if rx_buf.is_none() {
+            let mut buf = [0u8; 1];
+            if let Ok(len) = serial.read(&mut buf) {
+                if len > 0 {
+                    rx_buf = Some(buf[0]);
+                }
+            }
+        }
+
+        if let Some(in_pins) = rx.read() {
+            let gpio = unsafe { core::ptr::read_volatile(gpio_in_ptr) };
+            let addr = (gpio & 0xFFFF) as usize;
+            if (in_pins >> 10) == 0 {
                 // READ
-                let gpio = unsafe { core::ptr::read_volatile(gpio_in_ptr) };
-                let bus_addr = (gpio & 0xFFFF) as usize;
-                let value = if bus_addr < ROM.len() {
-                    ROM[bus_addr]
-                } else if ROM_SIZE < bus_addr {
-                    ram[bus_addr - ROM_SIZE]
+                let value = if addr < ROM.len() {
+                    ROM[addr]
+                } else if RAM_START <= addr && addr < REG_START {
+                    ram[addr - ROM_SIZE]
+                } else if REG_START <= addr {
+                    // I/O
+                    match addr {
+                        REG_DTR => {
+                            if rx_buf.is_some() {
+                                0x01
+                            } else {
+                                0x00
+                            }
+                        }
+                        REG_RX =>  {
+                            rx_buf.take().unwrap_or(0x00)
+                        },
+                        _ => 0x00,
+                    }
                 } else {
                     0x00
                 };
-                defmt::println!("READ: {:04x} -> {:02x}", bus_addr, value);
+                defmt::trace!("READ: {:04x} -> {:02x}", addr, value);
                 tx.write((value as u32) << 8 | 0xFF);
             } else {
                 // WRITE
-                defmt::println!("WRITE");
+                let data = (in_pins & 0xFF) as u8;
+                if RAM_START <= addr && addr < REG_START {
+                    ram[addr - ROM_SIZE] = data;
+                } else if REG_START <= addr {
+                    // I/O
+                    match addr {
+                        REG_TX => {
+                            defmt::trace!("TX: {:02x} {=[u8]:a}", data, [data]);
+                            serial.write(&[data]).ok();
+                        }
+                        _ => {}
+                    }
+                }
+                defmt::trace!("WRITE: {:04x} <- {:02x}", addr, data);
                 tx.write(0);
             }
         }
