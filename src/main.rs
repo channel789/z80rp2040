@@ -3,7 +3,6 @@
 
 use core::mem::MaybeUninit;
 
-use cortex_m::delay::Delay;
 use embedded_hal::digital::v2::OutputPin;
 use rp_pico::{
     entry,
@@ -12,7 +11,7 @@ use rp_pico::{
         gpio::{FunctionPio0, Pin, PullUp},
         pio::{PIOExt as _, ShiftDirection},
         usb::UsbBus,
-        Clock as _, Sio,
+        Sio,
     },
     pac, XOSC_CRYSTAL_FREQ,
 };
@@ -36,7 +35,6 @@ const REG_TX: usize = 0xFFFF;
 fn entry() -> ! {
     defmt::println!("start");
 
-    let core = cortex_m::Peripherals::take().unwrap();
     let mut pac = pac::Peripherals::take().unwrap();
     let mut watchdog = hal::Watchdog::new(pac.WATCHDOG);
     let clocks = hal::clocks::init_clocks_and_plls(
