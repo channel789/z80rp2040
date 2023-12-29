@@ -1,6 +1,8 @@
 #![no_main]
 #![no_std]
 
+use core::mem::MaybeUninit;
+
 use cortex_m::delay::Delay;
 use embedded_hal::digital::v2::OutputPin;
 use rp_pico::{
@@ -18,15 +20,13 @@ use usb_device::{
     class_prelude::UsbBusAllocator,
     device::{UsbDeviceBuilder, UsbVidPid},
 };
-use usbd_serial::{USB_CLASS_CDC, SerialPort};
+use usbd_serial::{SerialPort, USB_CLASS_CDC};
 use z80rp2040 as _; // global logger + panicking-behavior + memory layout
 
-const ROM_SIZE: usize = 0x1000;
 const REG_SIZE: usize = 3;
-const RAM_START: usize = ROM_SIZE;
-const RAM_SIZE: usize = 0x10000 - ROM_SIZE - REG_SIZE;
+const RAM_START: usize = 0;
+const RAM_SIZE: usize = 0x10000 - REG_SIZE;
 const REG_START: usize = RAM_START + RAM_SIZE;
-const ROM: &[u8] = include_bytes!("../z80/upcase.bin");
 
 const REG_DTR: usize = 0xFFFD;
 const REG_RX: usize = 0xFFFE;
@@ -183,9 +183,9 @@ fn entry() -> ! {
     let gpio_in_addr: u32 = 0xd0000000 + 0x004;
     let gpio_in_ptr = gpio_in_addr as *const u32;
 
-    let ram = cortex_m::singleton!(: [u8; RAM_SIZE] = [0; RAM_SIZE]).unwrap();
-    ram[0] = 78;
-    ram[1] = 9;
+    #[link_section = ".z80"]
+    static mut RAM: MaybeUninit<[u8; RAM_SIZE]> = MaybeUninit::uninit();
+    let ram = unsafe { RAM.write([0x00; RAM_SIZE]) };
 
     let mut rx_buf: Option<u8> = None;
     loop {
@@ -204,11 +204,9 @@ fn entry() -> ! {
             let addr = (gpio & 0xFFFF) as usize;
             if (in_pins >> 10) == 0 {
                 // READ
-                let value = if addr < ROM.len() {
-                    ROM[addr]
-                } else if RAM_START <= addr && addr < REG_START {
-                    ram[addr - ROM_SIZE]
-                } else if REG_START <= addr {
+                let value = if addr < REG_START {
+                    ram[addr]
+                } else {
                     // I/O
                     match addr {
                         REG_DTR => {
@@ -218,22 +216,18 @@ fn entry() -> ! {
                                 0x00
                             }
                         }
-                        REG_RX =>  {
-                            rx_buf.take().unwrap_or(0x00)
-                        },
+                        REG_RX => rx_buf.take().unwrap_or(0x00),
                         _ => 0x00,
                     }
-                } else {
-                    0x00
                 };
                 defmt::trace!("READ: {:04x} -> {:02x}", addr, value);
                 tx.write((value as u32) << 8 | 0xFF);
             } else {
                 // WRITE
                 let data = (in_pins & 0xFF) as u8;
-                if RAM_START <= addr && addr < REG_START {
-                    ram[addr - ROM_SIZE] = data;
-                } else if REG_START <= addr {
+                if addr < REG_START {
+                    ram[addr] = data;
+                } else {
                     // I/O
                     match addr {
                         REG_TX => {

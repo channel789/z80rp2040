@@ -13,3 +13,11 @@ SECTIONS {
         KEEP(*(.boot2));
     } > BOOT2
 } INSERT BEFORE .text;
+
+SECTIONS {
+    . = 0x20030000;
+    .z80 (NOLOAD) :
+    {
+        *(.z80 .z80.*);
+    } > RAM
+} INSERT AFTER .uninit;
